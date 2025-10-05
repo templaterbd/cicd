@@ -1,0 +1,41 @@
+    post {
+        success {
+            echo """
+                CI PIPELINE SUCCESS! 🎉        
+
+            ✅ All Stages Completed:
+               • Source code security scanned (Trivy)
+               • Application built and tested (Maven)
+               • JAR package created
+               • Docker image built
+               • Image security validated (Trivy)
+               • Image pushed to Docker Hub
+
+            🐳 Docker Images Published:
+               • ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
+               • ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
+
+            📊 Build Info:
+               • Build: #${BUILD_NUMBER}
+               • Tag: ${IMAGE_TAG}
+            """
+        }
+        
+        failure {
+            echo """
+            ❌ Pipeline failed at stage: ${env.STAGE_NAME}
+            Build: #${BUILD_NUMBER}
+            Check logs above for error details.
+            """
+        }
+        
+        always {
+            container('docker') {
+                sh '''
+                    echo "🧹 Cleaning up Docker images..."
+                    docker image prune -f || true
+                '''
+            }
+        }
+    } // end of post
+} // end of pipeline
