@@ -9,7 +9,7 @@ metadata:
 spec:
   containers:
     - name: jnlp
-      image: jenkins/inbound-agent:latest-jdk17
+      image: jenkins/inbound-agent:3206.vb_15dcf73f6a_9-2-jdk17
       resources:
         requests:
           memory: "256Mi"
@@ -28,13 +28,13 @@ spec:
         limits:
           memory: "1Gi"
           cpu: "500m"
-    - name: docker
-      image: docker:24-dind
-      securityContext:
-        privileged: true
-      env:
-        - name: DOCKER_TLS_CERTDIR
-          value: ""
+      volumeMounts:
+        - name: maven-cache
+          mountPath: /root/.m2
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:v1.19.0-debug
+      command: ['/busybox/cat']
+      tty: true
       resources:
         requests:
           memory: "512Mi"
@@ -43,15 +43,12 @@ spec:
           memory: "1Gi"
           cpu: "500m"
       volumeMounts:
-        - name: docker-storage
-          mountPath: /var/lib/docker
+        - name: docker-config
+          mountPath: /kaniko/.docker
     - name: trivy
-      image: aquasec/trivy:latest
+      image: aquasec/trivy:0.48.3
       command: ['sleep']
       args: ['99d']
-      env:
-        - name: DOCKER_HOST
-          value: tcp://localhost:2375
       resources:
         requests:
           memory: "128Mi"
@@ -60,8 +57,14 @@ spec:
           memory: "256Mi"
           cpu: "100m"
   volumes:
-    - name: docker-storage
+    - name: maven-cache
       emptyDir: {}
+    - name: docker-config
+      secret:
+        secretName: docker-config
+        items:
+          - key: .dockerconfigjson
+            path: config.json
             '''
         }
     }

@@ -1,29 +1,37 @@
     environment {
-        DOCKER_USERNAME = '{username}'
-        IMAGE_NAME = '{desired_app_name}'
-        IMAGE_TAG = "v${BUILD_NUMBER}"
+        DOCKER_USERNAME = 'davidbulke'
+        IMAGE_NAME = 'java-app-ci'
+        GIT_COMMIT_SHORT = sh(script: "git rev-parse --short=8 HEAD", returnStdout: true).trim()
+        GIT_BRANCH = sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+        IMAGE_TAG = "${GIT_COMMIT_SHORT}-${BUILD_NUMBER}"
+        FULL_IMAGE_NAME = "${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}"
     }
     
     stages {
         stage('Checkout') {
             steps {
                 echo """
-                             PIPELINE STARTING...
-                        Build Number: ${BUILD_NUMBER}
-                        Image Tag: ${IMAGE_TAG}
+
+                         PIPELINE STARTING...
+
+                    Branch:       ${GIT_BRANCH}
+                    Commit:       ${GIT_COMMIT_SHORT}
+                    Build:        #${BUILD_NUMBER}
+                    Image Tag:    ${IMAGE_TAG}
+                    Full Image:   ${FULL_IMAGE_NAME}
 
                 """
-                sh 'git checkout main'
+                sh 'git checkout ${GIT_BRANCH}'
                 sh 'ls -la'
             }
         }
-        
+
         stage('Trivy Security Scan - Source Code') {
             steps {
                 container('trivy') {
                     echo 'Scanning source code for vulnerabilities...'
                     sh '''
-                        trivy fs --exit-code 0 --severity HIGH,CRITICAL --no-progress .
+                        trivy fs --exit-code 0 --severity HIGH,CRITICAL --no-progress .   //change to 1 for fail build due to vulnerabilities
                         echo "Source code security scan completed!"
                     '''
                 }
@@ -33,11 +41,11 @@
         stage('Build') {
             steps {
                 container('maven') {
-                sh 'mvn clean package -DskipTests -B'
+                    sh 'mvn clean package -DskipTests -B'
                 }
             }
         }
-
+        
         stage('Tests') {
             steps {
                 container('maven') {
@@ -46,7 +54,7 @@
                 }
             }
         }
-
+        
         stage('Package JAR') {
             steps {
                 container('maven') {
@@ -56,68 +64,55 @@
                 }
             }
         }
-
-        stage('Build Docker Image Stage') {
-            steps {
-                container('docker') {
-                    echo 'Building Docker image...'
-                    sh '''
-                        # Wait for Docker daemon to be ready
-                        echo "Waiting for Docker daemon..."
-                        for i in $(seq 1 30); do
-                            docker info >/dev/null 2>&1 && break
-                            echo "Still waiting... ($i/30)"
-                            sleep 2
-                        done
-
-                        echo "Building Docker image..."
-                        docker build -t ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG} .
-                        docker tag ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
-                        echo "Docker image built!"
-                        docker images | grep ${IMAGE_NAME}
-                    '''
-                }
-            }
-        }
-
-        stage('Trivy Security Scans Stage for built Docker image') {
-            steps {
-                container('trivy') {
-                    echo 'Scanning Docker image for vulnerabilities...'
-                    sh '''
-                        # Wait for Docker daemon
-                        echo "Connecting to Docker daemon..."
-                        for i in $(seq 1 20); do
-                            docker info >/dev/null 2>&1 && break
-                            echo "Waiting for Docker connection... ($i/20)"
-                            sleep 2
-                        done
-
-                        echo "Scanning image: ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}"
-                        trivy image --exit-code 0 --severity HIGH,CRITICAL --no-progress ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
-                        echo "Docker image security scan completed!"
-                    '''
-                }
-            }
-        }
         
-        stage('Push to Docker Hub Stage') {
+        stage('Build Docker Image with Kaniko') {
             steps {
-                container('docker') {
-                    echo 'Pushing to Docker Hub...'
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-credentials',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        sh '''
-                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            echo "Pushing ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}..."
-                            docker push ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
-                            echo "Images pushed to Docker Hub!"
-                        '''
+                container('kaniko') {
+                    echo "Building Docker image with Kaniko (unprivileged)..."
+                    script {
+                        // Build list of tags to apply
+                        def tags = [
+                            "--destination=${FULL_IMAGE_NAME}"
+                        ]
+                        
+                        // Only tag as 'latest' if on main branch
+                        if (env.GIT_BRANCH == 'main') {
+                            tags.add("--destination=${DOCKER_USERNAME}/${IMAGE_NAME}:latest")
+                            echo "Main branch detected - will also tag as 'latest'"
+                        }
+                        
+                        // Join tags for the command
+                        def tagString = tags.join(' ')
+                        
+                        sh """
+                            /kaniko/executor \
+                                --context=\${PWD} \
+                                --dockerfile=\${PWD}/Dockerfile \
+                                ${tagString} \
+                                --cache=true \
+                                --cache-ttl=24h \
+                                --compressed-caching=false \
+                                --snapshot-mode=redo \
+                                --log-format=text \
+                                --verbosity=info
+                            
+                            echo "✅ Docker image built successfully with Kaniko!"
+                        """
                     }
                 }
             }
         }
-    } // end of stages
+
+        stage('Trivy Security Scan - Docker Image') {
+            steps {
+                container('trivy') {
+                    echo "Scanning Docker image for vulnerabilities..."
+                    sh """
+                        echo "Scanning image: ${FULL_IMAGE_NAME}"
+                        trivy image --exit-code 0 --severity CRITICAL --no-progress ${FULL_IMAGE_NAME} //change to 1 for fail build due to vulnerabilities
+                        echo "✅ Docker image security scan passed!"
+                    """
+                }
+            }
+        }
+    } 

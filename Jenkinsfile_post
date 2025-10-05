@@ -6,9 +6,9 @@
                     ""
                     
                 echo """
-                    ═══════════════════════════════════════
+                    
                         CI PIPELINE SUCCESS! 🎉        
-                    ═══════════════════════════════════════
+                    
 
                     ✅ All Stages Completed:
                        - Source code security scanned (Trivy)
@@ -29,23 +29,23 @@
                     
                     🔗 Pull Command:
                        docker pull ${FULL_IMAGE_NAME}
-                    ═══════════════════════════════════════
+                    
                 """
             }
         }
         
         failure {
             echo """
-            ═══════════════════════════════════════
+            
                 ❌ PIPELINE FAILED
-            ═══════════════════════════════════════
+            
             Stage: ${env.STAGE_NAME}
             Build: #${BUILD_NUMBER}
             Branch: ${GIT_BRANCH}
             Commit: ${GIT_COMMIT_SHORT}
             
             Check logs above for error details.
-            ═══════════════════════════════════════
+            
             """
         }
         
