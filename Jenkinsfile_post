@@ -1,41 +1,56 @@
     post {
         success {
-            echo """
-                CI PIPELINE SUCCESS! 🎉        
+            script {
+                def latestInfo = (env.GIT_BRANCH == 'main') ? 
+                    "\n   - ${DOCKER_USERNAME}/${IMAGE_NAME}:latest" : 
+                    ""
+                    
+                echo """
+                    ═══════════════════════════════════════
+                        CI PIPELINE SUCCESS! 🎉        
+                    ═══════════════════════════════════════
 
-            ✅ All Stages Completed:
-               • Source code security scanned (Trivy)
-               • Application built and tested (Maven)
-               • JAR package created
-               • Docker image built
-               • Image security validated (Trivy)
-               • Image pushed to Docker Hub
+                    ✅ All Stages Completed:
+                       - Source code security scanned (Trivy)
+                       - Application built and tested (Maven)
+                       - JAR package created
+                       - Docker image built (Kaniko - unprivileged)
+                       - Image security validated (Trivy)
+                       - Image pushed to Docker Hub
 
-            🐳 Docker Images Published:
-               • ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
-               • ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
+                    🐳 Docker Images Published:
+                       - ${FULL_IMAGE_NAME}${latestInfo}
 
-            📊 Build Info:
-               • Build: #${BUILD_NUMBER}
-               • Tag: ${IMAGE_TAG}
-            """
+                    📊 Build Info:
+                       - Build: #${BUILD_NUMBER}
+                       - Branch: ${GIT_BRANCH}
+                       - Commit: ${GIT_COMMIT_SHORT}
+                       - Tag: ${IMAGE_TAG}
+                    
+                    🔗 Pull Command:
+                       docker pull ${FULL_IMAGE_NAME}
+                    ═══════════════════════════════════════
+                """
+            }
         }
         
         failure {
             echo """
-            ❌ Pipeline failed at stage: ${env.STAGE_NAME}
+            ═══════════════════════════════════════
+                ❌ PIPELINE FAILED
+            ═══════════════════════════════════════
+            Stage: ${env.STAGE_NAME}
             Build: #${BUILD_NUMBER}
+            Branch: ${GIT_BRANCH}
+            Commit: ${GIT_COMMIT_SHORT}
+            
             Check logs above for error details.
+            ═══════════════════════════════════════
             """
         }
         
         always {
-            container('docker') {
-                sh '''
-                    echo "🧹 Cleaning up Docker images..."
-                    docker image prune -f || true
-                '''
-            }
+            echo "Pipeline execution completed for build #${BUILD_NUMBER}"
         }
-    } // end of post
-} // end of pipeline
+    }
+} 
