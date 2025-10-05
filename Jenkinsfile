@@ -1,6 +1,6 @@
     environment {
-        DOCKER_USERNAME = 'davidbulke'
-        IMAGE_NAME = 'java-app'
+        DOCKER_USERNAME = '{username'
+        IMAGE_NAME = '{desired_app_name}'
         IMAGE_TAG = "v${BUILD_NUMBER}"
     }
     
@@ -8,7 +8,7 @@
         stage('Checkout') {
             steps {
                 echo """
-                           CI PIPELINE STARTING...
+                             PIPELINE STARTING...
                         Build Number: ${BUILD_NUMBER}
                         Image Tag: ${IMAGE_TAG}
 
