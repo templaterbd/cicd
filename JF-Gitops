@@ -1,0 +1,285 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                namespace: jenkins
+              spec:
+                containers:
+                - name: jnlp
+                  image: jenkins/inbound-agent:latest-jdk17
+                  resources:
+                    requests:
+                      memory: "512Mi"
+                      cpu: "250m"
+                    limits:
+                      memory: "1Gi"
+                      cpu: "500m"
+                - name: maven
+                  image: maven:3.9.6-eclipse-temurin-17
+                  command: [sleep]
+                  args: [99d]
+                  resources:
+                    requests:
+                      memory: "2Gi"
+                      cpu: "1"
+                    limits:
+                      memory: "4Gi"
+                      cpu: "2"
+                - name: docker
+                  image: docker:24-dind
+                  securityContext:
+                    privileged: true
+                  env:
+                  - name: DOCKER_TLS_CERTDIR
+                    value: ""
+                  resources:
+                    requests:
+                      memory: "1Gi"
+                      cpu: "500m"
+                    limits:
+                      memory: "2Gi"
+                      cpu: "1"
+                  volumeMounts:
+                  - name: docker-storage
+                    mountPath: /var/lib/docker
+                - name: trivy
+                  image: aquasec/trivy:latest
+                  command: [sleep]
+                  args: [99d]
+                  env:
+                  - name: DOCKER_HOST
+                    value: "tcp://localhost:2375"
+                  resources:
+                    requests:
+                      memory: "256Mi"
+                      cpu: "100m"
+                    limits:
+                      memory: "1Gi"
+                      cpu: "500m"
+                volumes:
+                - name: docker-storage
+                  emptyDir: {}
+            '''
+        }
+    }
+    
+    environment {
+        DOCKER_REGISTRY = 'docker.io'
+        DOCKER_USERNAME = '{USERNAME}'
+        IMAGE_NAME = '{DESIRED_IMAGE_NAME'
+        IMAGE_TAG = "v${BUILD_NUMBER}"
+        DOCKER_HOST = "tcp://localhost:2375"
+    }
+    
+    stages {
+        stage('📥 Checkout & Environment') {
+            steps {
+                echo """
+                       CI/CD PIPELINE STARTING                          
+                
+                Build Number: ${BUILD_NUMBER}
+                Image Tag: ${IMAGE_TAG}
+                """
+                
+                sh 'ls -la'
+            }
+        }
+        
+        stage('🔒 Security Scan - Source Code') {
+            steps {
+                container('trivy') {
+                    echo '🔒 Scanning source code for vulnerabilities...'
+                    sh '''
+                        trivy fs --exit-code 0 --severity HIGH,CRITICAL --no-progress .
+                        echo "✅ Source code security scan completed!"
+                    '''
+                }
+            }
+        }
+        
+        stage('🔨 Build & Unit Test') {
+            steps {
+                container('maven') {
+                    echo '🔨 Building Spring Boot application...'
+                    sh '''
+                        mvn clean compile test -T 4C -q
+                        echo "✅ Build and tests completed!"
+                    '''
+                    junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+                }
+            }
+        }
+        
+        stage('📦 Package Application') {
+            steps {
+                container('maven') {
+                    echo '📦 Creating JAR package...'
+                    sh '''
+                        mvn package -DskipTests -T 4C -q
+                        ls -lh target/*.jar
+                    '''
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                }
+            }
+        }
+        
+        stage('🐳 Docker Build') {
+            steps {
+                container('docker') {
+                    echo '🐳 Building Docker image...'
+                    sh '''
+                        # Wait for Docker daemon to be ready
+                        echo "Waiting for Docker daemon..."
+                        for i in $(seq 1 30); do
+                            docker info >/dev/null 2>&1 && break
+                            echo "Still waiting... ($i/30)"
+                            sleep 2
+                        done
+                        
+                        echo "Building Docker image..."
+                        docker build -t ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker tag ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
+                        echo "✅ Docker image built!"
+                        docker images | grep ${IMAGE_NAME}
+                    '''
+                }
+            }
+        }
+        
+        stage('🔒 Security Scan - Docker Image') {
+            steps {
+                container('trivy') {
+                    echo '🔒 Scanning Docker image for vulnerabilities...'
+                    sh '''
+                        # Wait for Docker daemon
+                        echo "Connecting to Docker daemon..."
+                        for i in $(seq 1 20); do
+                            docker info >/dev/null 2>&1 && break
+                            echo "Waiting for Docker connection... ($i/20)"
+                            sleep 2
+                        done
+                        
+                        echo "Scanning image: ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}"
+                        trivy image --exit-code 0 --severity HIGH,CRITICAL --no-progress ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
+                        echo "✅ Docker image security scan completed!"
+                    '''
+                }
+            }
+        }
+        
+        stage('🚀 Push to Docker Hub') {
+            steps {
+                container('docker') {
+                    echo '🚀 Pushing to Docker Hub...'
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh '''
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                            
+                            echo "Pushing ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}..."
+                            docker push ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
+                            
+                            echo "Pushing ${DOCKER_USERNAME}/${IMAGE_NAME}:latest..."
+                            docker push ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
+                            
+                            echo "✅ Images pushed to Docker Hub!"
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('📝 Update GitOps Repo') {
+            steps {
+                script {
+                    echo '📝 Updating Kubernetes manifests in GitOps repo...'
+                    withCredentials([usernamePassword(
+                        credentialsId: 'github-credentials',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )]) {
+                        sh '''
+                            # Configure git
+                            git config --global user.email "jenkins@ci.local"
+                            git config --global user.name "Jenkins CI"
+                            
+                            # Clone deployment repo
+                            rm -rf demo-app-manifest
+                            git clone https://${GIT_USER}:${GIT_TOKEN}@github.com/Davidbulke/demo-app-manifest.git
+                            cd demo-app-manifest
+
+                            #Install yq if not present
+                            curl -Ls https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -o ./yq
+                            chmod +x ./yq
+                            export PATH=$PWD:$PATH
+
+                            # Update image tag in values.yaml
+                            ./yq e '.image.tag = "${IMAGE_TAG}"' -i vinted-demo-app/values.yaml
+                            
+                            # Show what changed
+                            git diff vinted-demo-app/values.yaml
+                            
+                            # Commit and push
+                            git add vinted-demo-app/values.yaml
+                            git commit -m "🚀 Deploy ${IMAGE_TAG} to dev - Build #${BUILD_NUMBER}"
+                            git push origin main
+                            
+                            echo "✅ GitOps repo updated!"
+                            echo "ArgoCD will automatically sync and deploy within 3 minutes"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo """
+                    CI/CD PIPELINE - SUCCESS! 🎉          
+            
+             All Stages Completed:
+               • Source code security scanned (Trivy)
+               • Application built and tested (Maven)
+               • JAR package created
+               • Docker image built
+               • Image security validated (Trivy)
+               • Image pushed to Docker Hub
+               • GitOps repo updated for deployment
+            
+              Docker Images Published:
+               • ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
+               • ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
+            
+             Build Info:
+               • Build: #${BUILD_NUMBER}
+               • Tag: ${IMAGE_TAG}
+            
+            🚀 ArgoCD will deploy automatically!
+            """
+        }
+        
+        failure {
+            echo """
+            ❌ Pipeline failed at stage: ${env.STAGE_NAME}
+            Build: #${BUILD_NUMBER}
+            Check logs above for error details.
+            """
+        }
+        
+        always {
+            container('docker') {
+                sh '''
+                    echo "🧹 Cleaning up Docker images..."
+                    docker image prune -f || true
+                '''
+            }
+        }
+    }
+}
