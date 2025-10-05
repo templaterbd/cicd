@@ -8,7 +8,7 @@
         stage('Checkout') {
             steps {
                 echo """
-                        VINTED CI PIPELINE STARTING...
+                           CI PIPELINE STARTING...
                         Build Number: ${BUILD_NUMBER}
                         Image Tag: ${IMAGE_TAG}
 
