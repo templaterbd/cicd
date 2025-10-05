@@ -1,5 +1,5 @@
     environment {
-        DOCKER_USERNAME = '{username'
+        DOCKER_USERNAME = '{username}'
         IMAGE_NAME = '{desired_app_name}'
         IMAGE_TAG = "v${BUILD_NUMBER}"
     }
@@ -30,20 +30,24 @@
             }
         }
         
-        stage('Build & Unit Test') {
+        stage('Build') {
             steps {
                 container('maven') {
-                    echo 'Building Spring Boot application...'
-                    sh '''
-                        mvn clean compile test -T 4C -q
-                        echo "Build and tests completed!"
-                    '''
-                    junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+                sh 'mvn clean package -DskipTests -B'
                 }
             }
         }
 
-        stage('Package Application - JAR') {
+        stage('Tests') {
+            steps {
+                container('maven') {
+                    sh 'mvn test -B'
+                    junit 'target/surefire-reports/*.xml'
+                }
+            }
+        }
+
+        stage('Package JAR') {
             steps {
                 container('maven') {
                     sh 'mvn package -DskipTests'
@@ -52,8 +56,8 @@
                 }
             }
         }
-        
-        stage('Docker Building Image') {
+
+        stage('Build Docker Image Stage') {
             steps {
                 container('docker') {
                     echo 'Building Docker image...'
@@ -68,15 +72,15 @@
 
                         echo "Building Docker image..."
                         docker build -t ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG} .
-                        docker tag ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
+                        docker tag ${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
                         echo "Docker image built!"
                         docker images | grep ${IMAGE_NAME}
                     '''
                 }
             }
         }
-        
-        stage('Trivy Security Scans Built Docker Image') {
+
+        stage('Trivy Security Scans Stage for built Docker image') {
             steps {
                 container('trivy') {
                     echo 'Scanning Docker image for vulnerabilities...'
@@ -97,7 +101,7 @@
             }
         }
         
-        stage('Push Built Image to Docker Hub') {
+        stage('Push to Docker Hub Stage') {
             steps {
                 container('docker') {
                     echo 'Pushing to Docker Hub...'
