@@ -1,0 +1,67 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: jenkins
+spec:
+  containers:
+    - name: jnlp
+      image: jenkins/inbound-agent:latest-jdk17
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "512Mi"
+          cpu: "250m"
+    - name: maven
+      image: maven:3.9.6-eclipse-temurin-17
+      command: [sleep]
+      args: [99d]
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1Gi"
+          cpu: "500m"
+    - name: docker
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1Gi"
+          cpu: "500m"
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+    - name: trivy
+      image: aquasec/trivy:latest
+      command: ['sleep']
+      args: ['99d']
+      env:
+        - name: DOCKER_HOST
+          value: tcp://localhost:2375
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "50m"
+        limits:
+          memory: "256Mi"
+          cpu: "100m"
+  volumes:
+    - name: docker-storage
+      emptyDir: {}
+            '''
+        }
+    }
