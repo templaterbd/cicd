@@ -15,7 +15,15 @@ kubectl create secret docker-registry docker-config \
   --docker-password=YOUR_DOCKER_HUB_TOKEN \
   --namespace=jenkins
 
-# Option 2: Create from existing Docker config
-kubectl create secret generic docker-config \
-  --from-file=config.json=$HOME/.docker/config.json \
-  --namespace=jenkins
+your-app/
+├── Jenkinsfile              # CI pipeline
+├── Dockerfile               # Container build
+├── requirements.txt         # Python dependencies
+├── k8s/                     # Kubernetes manifests
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── configmap.yaml
+│   ├── secret.yaml
+│   └── ingress.yaml
+└── argocd/                  # GitOps (optional)
+    └── application.yaml
